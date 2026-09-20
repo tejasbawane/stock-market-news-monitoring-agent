@@ -26,7 +26,6 @@ Open `.env` and add your keys:
 | Key | Required | Where to get it |
 | --- | --- | --- |
 | `FINNHUB_API_KEY` | Yes | https://finnhub.io/register (free) |
-| `ANTHROPIC_API_KEY` | No | https://console.anthropic.com |
 
 Then run:
 
