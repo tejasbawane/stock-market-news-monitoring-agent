@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock News Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --fog: #EDF0F4;
+  --paper: #FFFFFF;
+  --ink: #14213D;
+  --muted: #5B6579;
+  --rule: #CFD6E0;
+  --bull: #1F8A5B;  --bull-ink: #17694A;
+  --bear: #C8453D;  --bear-ink: #B23A33;
+  --flat: #7C879A;  --flat-ink: #566179;
+  --amber: #E8A21A;
+  --cobalt: #2B4ACB;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --tcol: 76px; --scol: 34px; --gap: 10px;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--fog); color: var(--ink);
+  font: 400 16px/1.5 var(--body); font-variant-numeric: tabular-nums;
+}
+h1, h2 { font-family: var(--display); margin: 0; letter-spacing: -0.01em; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.bull { --tone: var(--bull); --tone-ink: var(--bull-ink); }
+.bear { --tone: var(--bear); --tone-ink: var(--bear-ink); }
+.flat { --tone: var(--flat); --tone-ink: var(--flat-ink); }
+
+/* ---------- layout ---------- */
+.app {
+  max-width: 1400px; margin: 0 auto; padding: 22px clamp(14px, 3vw, 32px) 64px;
+  display: grid; gap: 22px 30px; align-items: start;
+  grid-template-columns: 272px minmax(0, 1fr) 320px;
+  grid-template-areas: "top top top" "watch feed side";
+}
+.top   { grid-area: top; }
+.watch { grid-area: watch; }
+.feed  { grid-area: feed; }
+.side  { grid-area: side; display: grid; gap: 18px; }
+.watch, .side { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; }
+@media (max-width: 1100px) {
+  .app { grid-template-columns: 250px minmax(0, 1fr); grid-template-areas: "top top" "watch feed" "side side"; }
+  .side { position: static; max-height: none; }
+}
+@media (max-width: 760px) {
+  :root { --tcol: 64px; --scol: 28px; --gap: 6px; }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "watch" "feed" "side"; }
+  .watch { position: static; max-height: none; }
+}
+
+/* ---------- top bar ---------- */
+.top { display: flex; flex-wrap: wrap; gap: 14px 24px; justify-content: space-between; align-items: flex-end; }
+.top h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 800; line-height: 1.05; }
+.status { margin: 8px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; color: var(--muted); font-size: 15px; }
+.status .line { display: inline-flex; align-items: center; gap: 8px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--flat); flex: none; }
+.dot.live { background: var(--bull); }
+.dot.paused { background: var(--amber); }
+.dot.off { background: var(--bear); }
+.dot.scan { background: var(--cobalt); animation: pulse 1.4s ease-out infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(43,74,203,.5); } 100% { box-shadow: 0 0 0 10px rgba(43,74,203,0); } }
+.controls { display: flex; gap: 10px; }
+.btn {
+  border: 1px solid var(--ink); background: var(--ink); color: #fff; border-radius: 8px;
+  padding: 8px 15px; font: 600 14px var(--display); letter-spacing: 0;
+}
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--rule); }
+.btn.ghost:hover:not(:disabled) { border-color: var(--ink); }
+.banner {
+  margin-top: 14px; padding: 10px 14px; border-radius: 10px; background: #FFF4DB;
+  border: 1px solid #F0D18A; color: #5B4300; font-size: 15px;
+}
+.banner[hidden] { display: none; }
+.banner code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+
+/* ---------- panels ---------- */
+.panel { background: var(--paper); border-radius: 14px; padding: 18px; }
+.panel h2 { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+.hint { margin: 0 0 12px; color: var(--muted); font-size: 14.5px; }
+.err { margin: 8px 0 0; color: var(--bear-ink); font-size: 14px; min-height: 0; }
+.err:empty { display: none; }
+
+/* watchlist */
+.watchlist { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 2px; }
+.wli { display: flex; align-items: stretch; gap: 2px; }
+.wrow {
+  flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto;
+  column-gap: 10px; text-align: left; border: 0; background: transparent; border-radius: 8px; padding: 7px 10px;
+}
+.wrow:hover { background: var(--fog); }
+.wrow[aria-pressed="true"] { background: var(--ink); color: #fff; }
+.wrow .sym { font: 700 16px var(--display); }
+.wrow .px { text-align: right; font-weight: 600; }
+.wrow .cnt { font-size: 13px; color: var(--muted); }
+.wrow .chg { text-align: right; font-size: 13.5px; font-weight: 600; color: var(--tone-ink, var(--muted)); }
+.wrow[aria-pressed="true"] .cnt { color: #B9C3D6; }
+.wrow[aria-pressed="true"] .chg { color: #fff; }
+.wrow.plain .px { visibility: hidden; }
+.x { border: 0; background: transparent; width: 30px; border-radius: 8px; color: var(--muted); font-size: 18px; line-height: 1; }
+.x:hover { background: var(--fog); color: var(--bear-ink); }
+.add { display: flex; gap: 8px; }
+.add input {
+  flex: 1; min-width: 0; border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; background: var(--paper);
+  text-transform: uppercase;
+}
+.add input::placeholder { text-transform: none; color: #8791A3; }
+
+/* alerts */
+.alerts { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 12px; }
+.alert { padding-left: 12px; border-left: 4px solid var(--tone); }
+.alert a { color: var(--ink); font-weight: 600; text-decoration: none; }
+.alert a:hover { text-decoration: underline; }
+.alert .sub { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; color: var(--muted); font-size: 13.5px; margin-bottom: 2px; }
+
+/* ---------- feed ---------- */
+.feedhead { display: flex; flex-wrap: wrap; gap: 10px 20px; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.feedhead h2 { font-size: 22px; font-weight: 700; }
+.seg { display: inline-flex; background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 3px; gap: 2px; }
+.seg button { border: 0; background: transparent; border-radius: 7px; padding: 5px 12px; font-weight: 500; font-size: 14.5px; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+
+.day {
+  position: sticky; top: 0; z-index: 2; background: var(--fog);
+  padding: 10px 0 14px calc(var(--tcol) + var(--scol) + var(--gap) * 2);
+  font: 700 15px var(--display); color: var(--muted);
+}
+.row {
+  position: relative; display: grid; column-gap: var(--gap); padding-bottom: 26px;
+  grid-template-columns: var(--tcol) var(--scol) minmax(0, 1fr);
+}
+.row::before {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 2px; background: var(--rule);
+  left: calc(var(--tcol) + var(--gap) + var(--scol) / 2 - 1px);
+}
+.time { text-align: right; font-size: 14px; color: var(--muted); padding-top: 2px; white-space: nowrap; }
+.node { justify-self: center; margin-top: 8px; border-radius: 50%; background: var(--tone); z-index: 1; box-shadow: 0 0 0 4px var(--fog); }
+.node.hi { box-shadow: 0 0 0 4px var(--fog), 0 0 0 6px var(--tone); }
+.headline {
+  font: 600 18px/1.3 var(--display); color: var(--ink); text-decoration: none; display: block;
+}
+a.headline:hover { text-decoration: underline; text-underline-offset: 3px; }
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 6px; font-size: 14px; color: var(--muted); }
+.tone { color: var(--tone-ink); font-weight: 600; }
+.ticks { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
+.ticks i { width: 4px; border-radius: 1px; background: var(--rule); }
+.ticks i:nth-child(1) { height: 6px; } .ticks i:nth-child(2) { height: 8px; } .ticks i:nth-child(3) { height: 10px; }
+.ticks i:nth-child(4) { height: 12px; } .ticks i:nth-child(5) { height: 14px; }
+.ticks i.on { background: var(--tone); }
+.tags { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.tag { font-size: 12.5px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 999px; background: var(--paper); color: var(--ink); font-weight: 600; }
+.take { margin: 8px 0 0; max-width: 72ch; }
+.more { margin-top: 6px; border: 0; background: none; padding: 0; color: var(--cobalt); font-size: 14px; font-weight: 600; }
+.more:hover { text-decoration: underline; }
+.summary { display: none; margin: 8px 0 0; max-width: 72ch; color: var(--muted); font-size: 15px; }
+.row.open .summary { display: block; }
+
+.empty { background: var(--paper); border-radius: 14px; padding: 26px; color: var(--muted); max-width: 60ch; }
+.empty strong { display: block; color: var(--ink); font: 700 18px var(--display); margin-bottom: 4px; }
+
+/* ---------- toasts ---------- */
+#toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 10px; width: min(360px, calc(100vw - 32px)); z-index: 10; }
+.toast {
+  background: var(--ink); color: #fff; border-radius: 12px; padding: 12px 14px; border-left: 5px solid var(--amber);
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; box-shadow: 0 8px 24px rgba(20,33,61,.28);
+  animation: rise .25s ease-out;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.toast b { font-family: var(--display); }
+.toast p { grid-column: 1 / -1; margin: 0; font-size: 15px; }
+.toast button { border: 0; background: none; color: #B9C3D6; font-size: 18px; line-height: 1; padding: 0 2px; }
+
+@media (max-width: 760px) {
+  .watchlist { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
+  .wli { flex: none; width: 176px; border: 1px solid var(--rule); border-radius: 10px; }
+  .wrow .cnt { white-space: nowrap; }
+}
+
+@media (prefers-reduced-motion: reduce) { .dot.scan, .toast { animation: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="top">
+    <div>
+      <h1>Stock News Agent</h1>
+      <p class="status">
+        <span class="line"><span id="dot" class="dot"></span><span id="statusLine">Connecting…</span></span>
+        <span id="engineLine">Scores come from keyword rules, so treat them as a rough guide.</span>
+      </p>
+      <div id="banner" class="banner" role="alert" hidden></div>
+    </div>
+    <div class="controls">
+      <button id="scanBtn" class="btn" type="button">Scan now</button>
+      <button id="pauseBtn" class="btn ghost" type="button">Pause agent</button>
+    </div>
+  </header>
+
+  <aside class="panel watch" aria-labelledby="watchTitle">
+    <h2 id="watchTitle">Watchlist</h2>
+    <ul id="watchList" class="watchlist"></ul>
+    <form id="addForm" class="add" autocomplete="off">
+      <label class="sr" for="symbolInput">Ticker symbol</label>
+      <input id="symbolInput" placeholder="Add a ticker" maxlength="10" spellcheck="false" autocapitalize="characters">
+      <button id="addBtn" class="btn" type="submit">Add</button>
+    </form>
+    <p id="addError" class="err" role="alert"></p>
+  </aside>
+
+  <main class="feed" aria-labelledby="feedTitle">
+    <div class="feedhead">
+      <h2 id="feedTitle">News feed</h2>
+      <div class="seg" role="group" aria-label="Filter stories">
+        <button type="button" data-f="all" aria-pressed="true">All</button>
+        <button type="button" data-f="bullish" aria-pressed="false">Bullish</button>
+        <button type="button" data-f="bearish" aria-pressed="false">Bearish</button>
+        <button type="button" data-f="high" aria-pressed="false">High impact</button>
+      </div>
+    </div>
+    <div id="timeline"></div>
+  </main>
+
+  <aside class="side">
+    <section class="panel" aria-labelledby="alertTitle">
+      <h2 id="alertTitle">Alerts</h2>
+      <p id="alertHint" class="hint"></p>
+      <ul id="alertList" class="alerts"></ul>
+      <button id="notifyBtn" class="btn ghost" type="button">Turn on desktop alerts</button>
+    </section>
+  </aside>
+
+</div>
+<div id="toasts" aria-live="polite"></div>
+
+<script>
+(() => {
+'use strict';
+
+const S = {
+  articles: [], alerts: [], status: {}, quotes: {}, version: -1,
+  filter: 'all', symbol: null, open: new Set(), seenAlerts: null,
+};
+const $ = (sel) => document.querySelector(sel);
+
+/* ---------- helpers ---------- */
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v === false || v == null) continue;
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+async function api(path, options = {}) {
+  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+  let data = {};
+  try { data = await res.json(); } catch { /* empty body */ }
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+const safeUrl = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : null; } catch { return null; } };
+const fmtTime = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const fmtPrice = (n) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
+const TONE = { bullish: 'bull', bearish: 'bear', neutral: 'flat' };
+const LABEL = { bullish: '▲ Bullish', bearish: '▼ Bearish', neutral: '– Neutral' };
+const symLabel = (s) => (s === 'MARKET' ? 'Market' : s);
+
+function dayLabel(ts) {
+  const d = new Date(ts * 1000);
+  const a = new Date(); a.setHours(0, 0, 0, 0);
+  const b = new Date(d); b.setHours(0, 0, 0, 0);
+  const diff = Math.round((a - b) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
+}
+function ticks(n) {
+  return h('span', { class: 'ticks', role: 'img', 'aria-label': `Impact ${n} of 5` },
+    [1, 2, 3, 4, 5].map((i) => h('i', { class: i <= n ? 'on' : '' })));
+}
+
+/* ---------- status + header ---------- */
+function renderStatus() {
+  const st = S.status;
+  $('#dot').className = 'dot ' + (st.scanning ? 'scan' : st.paused ? 'paused' : st.has_finnhub ? 'live' : 'off');
+  let text;
+  if (!st.has_finnhub) text = 'Waiting for a Finnhub API key.';
+  else if (st.paused) text = 'Paused. No scans until you resume.';
+  else if (st.scanning) text = 'Scanning the news now…';
+  else text = `Last scan ${st.last_scan ? fmtTime(st.last_scan) : 'not run yet'}. Next scan ${st.next_scan ? fmtTime(st.next_scan) : 'starting soon'}.`;
+  $('#statusLine').textContent = text;
+
+  const banner = $('#banner');
+  banner.replaceChildren();
+  if (!st.has_finnhub) {
+    banner.append('Add your free Finnhub key as ', h('code', {}, 'FINNHUB_API_KEY'), ' in the ', h('code', {}, '.env'), ' file, then restart the server.');
+    banner.hidden = false;
+  } else if (st.last_error) {
+    banner.textContent = st.last_error;
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+  }
+
+  $('#scanBtn').disabled = !st.has_finnhub || st.scanning;
+  $('#pauseBtn').textContent = st.paused ? 'Resume agent' : 'Pause agent';
+  $('#pauseBtn').disabled = !st.has_finnhub;
+  $('#alertHint').textContent = `The agent raises an alert when a story scores ${st.alert_threshold || 4} or 5 out of 5.`;
+}
+
+/* ---------- watchlist ---------- */
+let watchSig = '';
+function renderWatch() {
+  const watch = S.status.watchlist || [];
+  const counts = {};
+  for (const a of S.articles) for (const s of a.symbols) counts[s] = (counts[s] || 0) + 1;
+  const sig = JSON.stringify([watch, S.quotes, counts, S.symbol, S.articles.length]);
+  if (sig === watchSig) return;
+  watchSig = sig;
+
+  const list = $('#watchList');
+  list.replaceChildren();
+  const plain = (label, symbol, count) => h('li', { class: 'wli' },
+    h('button', { class: 'wrow plain', type: 'button', 'aria-pressed': String(S.symbol === symbol), onclick: () => setSymbol(symbol) },
+      h('span', { class: 'sym' }, label), h('span', { class: 'px' }, '0'),
+      h('span', { class: 'cnt' }, `${count} ${count === 1 ? 'story' : 'stories'}`)));
+  list.append(plain('All news', null, S.articles.length));
+
+  for (const sym of watch) {
+    const q = S.quotes[sym];
+    const pct = q && q.percent != null ? q.percent : null;
+    const tone = pct == null || pct === 0 ? 'flat' : pct > 0 ? 'bull' : 'bear';
+    const arrow = pct == null ? '' : pct > 0 ? '▲ ' : pct < 0 ? '▼ ' : '– ';
+    const n = counts[sym] || 0;
+    list.append(h('li', { class: 'wli' },
+      h('button', { class: `wrow ${tone}`, type: 'button', 'aria-pressed': String(S.symbol === sym), title: q && q.error ? q.error : null, onclick: () => setSymbol(sym) },
+        h('span', { class: 'sym' }, sym),
+        h('span', { class: 'px' }, q && q.price ? fmtPrice(q.price) : q && q.error ? 'n/a' : '…'),
+        h('span', { class: 'cnt' }, `${n} ${n === 1 ? 'story' : 'stories'}`),
+        h('span', { class: 'chg' }, pct == null ? '' : `${arrow}${Math.abs(pct).toFixed(2)}%`)),
+      h('button', { class: 'x', type: 'button', 'aria-label': `Remove ${sym}`, onclick: () => removeSymbol(sym) }, '×')));
+  }
+  list.append(plain('General market', 'MARKET', counts.MARKET || 0));
+}
+function setSymbol(sym) {
+  S.symbol = S.symbol === sym ? null : sym;
+  watchSig = '';
+  renderWatch();
+  renderFeed();
+}
+
+/* ---------- feed ---------- */
+function visibleArticles() {
+  return S.articles.filter((a) => {
+    if (S.symbol && !a.symbols.includes(S.symbol)) return false;
+    if (S.filter === 'bullish') return a.sentiment === 'bullish';
+    if (S.filter === 'bearish') return a.sentiment === 'bearish';
+    if (S.filter === 'high') return a.impact >= 4;
+    return true;
+  });
+}
+function toggleSummary(ev) {
+  const btn = ev.currentTarget;
+  const row = btn.closest('.row');
+  const open = row.classList.toggle('open');
+  open ? S.open.add(row.dataset.key) : S.open.delete(row.dataset.key);
+  btn.setAttribute('aria-expanded', String(open));
+  btn.textContent = open ? 'Hide summary' : 'Read summary';
+}
+function articleRow(a) {
+  const url = safeUrl(a.url);
+  const open = S.open.has(a.url);
+  const size = Math.round(8 + a.impact * 2.5);
+  return h('article', { class: `row ${TONE[a.sentiment] || 'flat'}${open ? ' open' : ''}`, 'data-key': a.url },
+    h('time', { class: 'time', datetime: new Date(a.published * 1000).toISOString() }, fmtTime(a.published)),
+    h('span', { class: `node${a.impact >= 4 ? ' hi' : ''}`, style: `width:${size}px;height:${size}px`, 'aria-hidden': 'true' }),
+    h('div', {},
+      url ? h('a', { class: 'headline', href: url, target: '_blank', rel: 'noopener noreferrer' }, a.headline)
+          : h('span', { class: 'headline' }, a.headline),
+      h('div', { class: 'meta' },
+        h('span', { class: 'tone' }, LABEL[a.sentiment] || LABEL.neutral),
+        ticks(a.impact),
+        h('span', { class: 'tags' }, a.symbols.map((s) => h('span', { class: 'tag' }, symLabel(s)))),
+        a.source ? h('span', {}, a.source) : null),
+      a.reason ? h('p', { class: 'take' }, a.reason) : null,
+      a.summary ? h('button', { class: 'more', type: 'button', 'aria-expanded': String(open), onclick: toggleSummary }, open ? 'Hide summary' : 'Read summary') : null,
+      a.summary ? h('p', { class: 'summary' }, a.summary) : null));
+}
+function emptyState() {
+  const st = S.status;
+  if (!st.has_finnhub) return ['Add a Finnhub key to start', 'Once the key is in your .env file and the server restarts, the agent begins scanning right away.'];
+  if (!S.articles.length && st.scanning) return ['The first scan is running', 'Stories appear here as soon as they are scored.'];
+  if (!S.articles.length) return ['No stories yet', 'Press Scan now to check the news feeds.'];
+  return ['No stories match this filter', 'Switch to All or pick a different ticker.'];
+}
+function renderFeed() {
+  const box = $('#timeline');
+  box.replaceChildren();
+  const items = visibleArticles();
+  if (!items.length) {
+    const [title, body] = emptyState();
+    box.append(h('div', { class: 'empty' }, h('strong', {}, title), body));
+    return;
+  }
+  let lastDay = '';
+  for (const a of items) {
+    const day = dayLabel(a.published);
+    if (day !== lastDay) { box.append(h('div', { class: 'day' }, day)); lastDay = day; }
+    box.append(articleRow(a));
+  }
+}
+
+/* ---------- alerts ---------- */
+let alertSig = '';
+function renderAlerts() {
+  const sig = S.alerts.map((a) => a.key).join('|');
+  if (sig === alertSig) return;
+  alertSig = sig;
+  const list = $('#alertList');
+  list.replaceChildren();
+  if (!S.alerts.length) {
+    list.append(h('li', { class: 'hint' }, 'No high-impact stories yet. They will show up here.'));
+    return;
+  }
+  for (const a of S.alerts.slice(0, 10)) {
+    const url = safeUrl(a.url);
+    list.append(h('li', { class: `alert ${TONE[a.sentiment] || 'flat'}` },
+      h('div', { class: 'sub' },
+        h('span', { class: 'tag' }, a.symbols.map(symLabel).join(', ')),
+        h('span', { class: 'tone' }, LABEL[a.sentiment] || LABEL.neutral),
+        ticks(a.impact),
+        h('span', {}, fmtTime(a.published))),
+      url ? h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, a.headline) : a.headline));
+  }
+}
+function toast(a) {
+  const el = h('div', { class: 'toast' },
+    h('b', {}, `${a.symbols.map(symLabel).join(', ')} · impact ${a.impact}/5`),
+    h('button', { type: 'button', 'aria-label': 'Dismiss', onclick: () => el.remove() }, '×'),
+    h('p', {}, a.headline));
+  $('#toasts').append(el);
+  setTimeout(() => el.remove(), 9000);
+}
+function notify(a) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(`${a.symbols.map(symLabel).join(', ')}: impact ${a.impact}/5`, { body: a.headline });
+  }
+}
+function handleAlerts() {
+  if (S.seenAlerts === null) { S.seenAlerts = new Set(S.alerts.map((a) => a.key)); return; }
+  for (const a of [...S.alerts].reverse()) {
+    if (S.seenAlerts.has(a.key)) continue;
+    S.seenAlerts.add(a.key);
+    toast(a);
+    notify(a);
+  }
+}
+function renderNotifyBtn() {
+  const btn = $('#notifyBtn');
+  if (!('Notification' in window)) { btn.hidden = true; return; }
+  btn.hidden = Notification.permission !== 'default';
+}
+
+/* ---------- data loops ---------- */
+async function loadFeed(force = false) {
+  try {
+    const d = await api(`/api/feed?v=${force ? -1 : S.version}`);
+    S.status = d.status;
+    renderStatus();
+    if (!d.unchanged) {
+      S.articles = d.articles;
+      S.alerts = d.alerts;
+      S.version = d.version;
+      handleAlerts();
+      renderFeed();
+      renderAlerts();
+    }
+    renderWatch();
+  } catch (e) {
+    $('#statusLine').textContent = 'Cannot reach the server. Is app.py still running?';
+    $('#dot').className = 'dot off';
+  }
+}
+async function loadQuotes() {
+  if (!S.status.has_finnhub) return;
+  try { S.quotes = (await api('/api/quotes')).quotes; renderWatch(); } catch { /* keep old quotes */ }
+}
+async function tick() {
+  await loadFeed();
+  setTimeout(tick, S.status.scanning ? 2500 : 10000);
+}
+
+/* ---------- actions ---------- */
+async function removeSymbol(sym) {
+  try {
+    await api('/api/watchlist/' + encodeURIComponent(sym), { method: 'DELETE' });
+    if (S.symbol === sym) S.symbol = null;
+    await loadFeed(true);
+  } catch (e) { $('#addError').textContent = e.message; }
+}
+$('#addForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const input = $('#symbolInput'), btn = $('#addBtn'), err = $('#addError');
+  const symbol = input.value.trim().toUpperCase();
+  err.textContent = '';
+  if (!symbol) return;
+  btn.disabled = true;
+  try {
+    await api('/api/watchlist', { method: 'POST', body: JSON.stringify({ symbol }) });
+    input.value = '';
+    await loadFeed(true);
+    loadQuotes();
+  } catch (e) { err.textContent = e.message; }
+  finally { btn.disabled = false; }
+});
+$('#scanBtn').addEventListener('click', async () => {
+  try { await api('/api/scan', { method: 'POST' }); } catch (e) { $('#banner').textContent = e.message; $('#banner').hidden = false; }
+  setTimeout(() => loadFeed(true), 600);
+});
+$('#pauseBtn').addEventListener('click', async () => {
+  try { await api('/api/agent/toggle', { method: 'POST' }); } catch { /* status refresh below shows the truth */ }
+  loadFeed(true);
+});
+$('#notifyBtn').addEventListener('click', async () => {
+  await Notification.requestPermission();
+  renderNotifyBtn();
+});
+document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
+  S.filter = b.dataset.f;
+  document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  renderFeed();
+}));
+
+renderNotifyBtn();
+tick().then(loadQuotes);
+setInterval(loadQuotes, 30000);
+})();
+</script>
+</body>
+</html>
